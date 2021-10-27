@@ -13,7 +13,6 @@ class PCB // Class PCB to keep track of information for each process - Data memb
 public: // Public data of PCB class includes the accessor and mutator functions of the class
     PCB* getLast();  // Used to quickly access the end of the list in each state going through the pcbPointers of each PCB
     PCB* getShortest(); // Used to find the shortest process in the list
-    PCB* getNext(int previousProcessID); // Used to go round robin through all processes
     PCB() { newProcess(); }  // Default value constructor using new process function - is not new state yet (until process ID and data are assigned)
     PCB(int num, int *array, int arraysize);  // Explicit value constructor assigns process ID and pointer to process data array, setting the process in new state
     
@@ -74,73 +73,66 @@ PCB::PCB(int num, int *array, int arraysize) {
     dataSize = arraysize; // Keep the passed function argument of array size as var
 }
 
-PCB* PCB::getLast() {
-    if (pcbPointer == NULL) { return this; }
-    else { return pcbPointer->getLast(); }
+PCB* PCB::getLast() { // Calls recursively on itself to return the very last PCB pointer in a list, calling first on the head of list
+    if (pcbPointer == NULL) { return this; } // If at the last PCB of the list, the next pointer will be null (and if the list is only 1 PCB)
+    else { return pcbPointer->getLast(); }  // Otherwise call recursively on the next PCB pointer, eventually returning the last one all the way back
 }
 
-PCB* PCB::getShortest() {
-    if (pcbPointer == NULL) { return this; }
-    else {
+PCB* PCB::getShortest() {  // Used for SJF scheduling to find the shortest job in the ready queue, by calling recursively starting with the head of the list
+    if (pcbPointer == NULL) { return this; }  // If the next PCB pointer is NULL, which means the end of the list, (or list is only 1 PCB) return the current PCB
+    else {  // Otherwise compare the next PCB pointer's next CPU burst to the current PCB's next CPU burst which is found through the processData array and using the index+1 for next burst
         if (pcbPointer->getShortest()->processData[pcbPointer->getShortest()->dataIndex + 1] < processData[dataIndex + 1]) { return pcbPointer->getShortest(); }
-        else { return this; }
+        else { return this; }  // If the current PCB's CPU burst is greater than or equal to the next (lower) PCB's CPU burst, return this pointer
     }
 }
 
-PCB* PCB::getNext(int previousProcessID) {
-
+void PCB::admitProcess(PCB** ready) { // Used to admit processes in the new state into the ready state at the beginning of the simulation (since all processes arrive at t=0)
+    if ((processState == "new") && ready != NULL) { // First check if the PCB's process state is at new and that the pointer to ready list pointer is not null
+        processState = "ready";  // If so, set the current process state to ready (If not, then the *ready list pointer must not have been found from the **ready double pointer)
+        if (*ready == NULL) { *ready = this; }  // If the ready list pointer is null (empty list), set the head of the list to this process
+        else { (*ready)->getLast()->pcbPointer = this; } // If the ready list is not empty, then get the very last PCB in that list and then add the current PCB onto the end of its next pointer
+    }  // If the double pointer was not found or the process was not in the new state (must be in new to be 'admitted' to ready)
+    else { cout << "Could not admit process " << processID << " - [" << processState << "]" << endl; } // Print error message
 }
 
-void PCB::admitProcess(PCB** ready) {
-    if ((processState == "new") && ready != NULL) {
-        processState = "ready";
-        if (*ready == NULL) { *ready = this; }
-        else { (*ready)->getLast()->pcbPointer = this; }
-    }
-    else { cout << "Could not admit process " << processID << " - [" << processState << "]" << endl; }
-}
-
-void PCB::runProcess(PCB** ready, PCB** running, int time) { // moves process from ready list to running, preempting 
-    if (processState == "ready") {
-        processState = "running";
-        if (*ready == this) {
-            *ready = pcbPointer;
+void PCB::runProcess(PCB** ready, PCB** running, int time) {  // moves process from ready list to running, preempting 
+    if (processState == "ready") {  // First check if process is in ready state (process can only go into running state from ready)
+        processState = "running";  // Set current process state to running
+        if (*ready == this) {     // If the head of the ready list is the current PCB
+            *ready = pcbPointer; // set the head of ready list to this PCB's next pointer (if null, then list is empty)
         }
-        else {
-            PCB* temp = *ready;
-            if (temp->pcbPointer != NULL) {
-                while (temp->pcbPointer != this) { temp = temp->pcbPointer; }
-                temp->pcbPointer = temp->pcbPointer->pcbPointer;
+        else { // Otherwise (if the current PCB is not the head of the ready list)
+            PCB* temp = *ready;  // Use temporary pointer to go through ready list to find the preceding PCB to the current one
+            if (temp->pcbPointer != NULL) {  // If the temporary PCB's pointer to next PCB (in ready list) is valid:
+                while (temp->pcbPointer != this) { temp = temp->pcbPointer; } // Go through each of the descendants of the temporary PCB pointer
+                temp->pcbPointer = temp->pcbPointer->pcbPointer; // After using while loop to find parent of running PCB, set its next PCB pointer to the current PCB's next pointer to mend the list
             }
         }
-        
-        *running = this;
-        pcbPointer = NULL;
+        *running = this;    // Set the running pointer to the current PCB
+        pcbPointer = NULL; // Set the next PCB pointer to NULL since there is only 1 process running at a time (no 'next' pointers in running)
         if (responseTime == -1) { responseTime = time; } // set response time when process is ran (if first time -1)
-    }
-    else { cout << "Could not run process " << processID << " - [" << processState << "]" << endl; }
+    } // Otherwise:  (if the process state was not "ready" to begin with)
+    else { cout << "Could not run process " << processID << " - [" << processState << "]" << endl; } // Print error message
 }
 
-void PCB::waitProcess(PCB** running, PCB** waiting) { // moves process from running to waiting list
-    if (processState == "running") {
-        processState = "waiting";
-        if (*waiting == NULL) { *waiting = this; }
-        else { (*waiting)->getLast()->pcbPointer = this; }
-        *running = NULL;
-        pcbPointer = NULL;
-    }
-    else { cout << "Could not move process " << processID << " to waiting queue - " << "[" << processState << "]" << endl; }
+void PCB::waitProcess(PCB** running, PCB** waiting) { // Moves current process from running to waiting list
+    if (processState == "running") {  // Check if the current PCB's process state is running (can not go to waiting list unless currently running)
+        processState = "waiting";    //  If so, update current PCB's process state to waiting
+        if (*waiting == NULL) { *waiting = this; }  // If the waiting list head pointer is NULL (list is empty), set the pointer to head of list to the current process
+        else { (*waiting)->getLast()->pcbPointer = this; } // If the waiting list is not empty, get the last PCB of the list and set its next pointer to the current process
+        *running = NULL;    // Now that the process has been moved to the waiting list, set the running list to NULL (empty)
+        pcbPointer = NULL; // Make sure that the pointer to next PCB is set to NULL since the current process is at the very end of the waiting list
+    } // Otherwise:  (if the process state was not "running" to begin with)
+    else { cout << "Could not move process " << processID << " to waiting queue - " << "[" << processState << "]" << endl; } // Print error message
 }
 
-void PCB::readyProcess(PCB** waiting, PCB** ready) {
-    if (processState == "waiting") {
-        processState = "ready";
-        if (*waiting == this) {
-            *waiting = pcbPointer;
-        }
-        else {
-            PCB* temp = *waiting;
-            if (temp->pcbPointer != NULL) {
+void PCB::readyProcess(PCB** waiting, PCB** ready) {  // Moves process from waiting list to ready queue
+    if (processState == "waiting") {  // Check if the current PCB's proccess state is waiting (can not go to ready queue unless the currently in waiting list)
+        processState = "ready";      // If so, update the current PCB's process state to ready
+        if (*waiting == this) { *waiting = pcbPointer; }    // If the head of the waiting list is the current process: set the new head of the waiting list to the pointer to next PCB (if NULL, empty list)
+        else {  // If the current process is not the head of the waiting list:
+            PCB* temp = *waiting;  // Set a temporary pointer to PCB as the head of the waiting list
+            if (temp->pcbPointer != NULL) {  // 
                 while (temp->pcbPointer != this) { temp = temp->pcbPointer; }
                 temp->pcbPointer = temp->pcbPointer->pcbPointer;
             }
@@ -164,10 +156,10 @@ void PCB::terminateProcess(PCB** running, PCB** terminated, int time) {
     else { cout << "Could not terminate process " << processID << " - [" << processState << "]" << endl; }
 }
 
-void PCB::incrementPC() {
-    if (dataIndex + 1 < dataSize) {
-        dataIndex++;
-        dataTime += processData[dataIndex];
+void PCB::incrementPC() {  // Increments the dataIndex, or program counter index in the array of process data (IO/CPU bursts)
+    if (dataIndex + 1 < dataSize) {  // If the data index is less than the total size of the data array
+        dataIndex++;  // Increment the data index to the next index in the data array
+        dataTime += processData[dataIndex];  // Add to the process dataTime with the new processData index so that the total burst time can be saved
     }
 }
 
@@ -214,7 +206,7 @@ void PCB::printTable(PCB* head, int id) { // At the end of simulation, print all
     if (id < head->getLength()) {
         PCB* search = head;
         while (search != NULL && search->processID != id + 1) { search = search->pcbPointer; }
-        if (search != NULL) { cout << "P" << search->processID << "    Tw = " << (search->waitingTime) << "    Ttr = " << (search->waitingTime + search->ioTime + search->cpuTime) << "    Tr = " << search->responseTime << endl; }
+        if (search != NULL) { cout << "P" << search->processID << "    Tw = " << (search->waitingTime-1) << "    Ttr = " << (search->waitingTime-1 + search->ioTime + search->cpuTime) << "    Tr = " << search->responseTime << endl; }
         search->printTable(head, id + 1);
     }
     else if (id == head->getLength()) {
@@ -244,7 +236,7 @@ int PCB::getLength() {
 
 
 
-// Non-member functions: \\
+// Non-member functions: //
 
 void programCounter(PCB* ready, PCB* running, PCB* waiting) {
     if (ready != NULL) { ready->waitTiming(); }
@@ -256,7 +248,7 @@ void scheduleSJF(PCB** ready, PCB** running, PCB** waiting, PCB** terminated) {
     if (ready != NULL && running != NULL && waiting != NULL && terminated != NULL) {
         int idleTime = 0;
         for (int t = 0; t <= 1024; t++) {  // TIME loop - time units t
-
+            //**order
             if (*waiting != NULL) {
                 (*waiting)->waitManage(waiting, ready);
             }
@@ -329,23 +321,24 @@ void scheduleFCFS(PCB** ready, PCB** running, PCB** waiting, PCB** terminated) {
                 }
                 return;
             } 
-            else {
-                if (*running == NULL) { idleTime++; } // Otherwise, if there is no process running then increment the idle time var
-                 // Increment the waiting, cpu, and io times
-            }
-            programCounter(*ready, *running, *waiting);
+            
+            if (*running == NULL) { idleTime++; } // Otherwise, if there is no process running then increment the idle time var
+                 
+            
+            programCounter(*ready, *running, *waiting); // Increment the waiting, cpu, and io times
         }
     }
 }
 
-//********
 void scheduleMLFQ(PCB** ready, PCB** running, PCB** waiting, PCB** terminated) {
     if (ready != NULL && running != NULL && waiting != NULL && terminated != NULL) {
         int idleTime = 0;
-        int prevProcID = 0;
         PCB* queue1 = NULL;
+        int tq1 = 5;
         PCB* queue2 = NULL;
+        int tq2 = 10;
         PCB* queue3 = NULL;
+        queue1 = *ready; // Processes are initialized in the ready queue - transfer them to queue1 of MLFQ
         for (int t = 0; t <= 1024; t++) {  // TIME loop - time units t
 
             if (*waiting != NULL) {
@@ -357,7 +350,7 @@ void scheduleMLFQ(PCB** ready, PCB** running, PCB** waiting, PCB** terminated) {
             if (*running == NULL) {     // Check if no processes are running (no preemption)
                 if (*ready != NULL) {  // If there is a process in ready queue:
 
-                    (*ready)->getNext(prevProcID)->runProcess(ready, running, t);  // Run first process in ready queue
+                    (*ready)->runProcess(ready, running, t);  // Run first process in ready queue
                     (*running)->incrementPC();
                     cout << "\nCurrent Execution time: " << t << endl;
                     (*running)->printStatus();
